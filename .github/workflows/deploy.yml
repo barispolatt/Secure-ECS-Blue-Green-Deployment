@@ -1,0 +1,85 @@
+name: Deploy to Amazon ECS
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REPOSITORY: bluegreen-demo-repo
+  ECS_SERVICE: demo-service
+  ECS_CLUSTER: demo-cluster
+  CONTAINER_NAME: app-container
+  CODEDEPLOY_APP: bluegreen-demo-app
+  CODEDEPLOY_GROUP: bluegreen-demo-dg
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # AWS OIDC için gerekli
+      contents: read
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    # 1. AWS'e Login Ol (Access Key yerine OIDC kullanarak güvenliği artırıyoruz)
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        role-to-assume: arn:aws:iam::ACCOUNT_ID:role/GitHubActionRole
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    # 2. Build & Push Docker Image
+    - name: Build, tag, and push image to Amazon ECR
+      id: build-image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ github.sha }}
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG.
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+        # 3. Güvenlik Taraması (DevSecOps)
+    - name: Trivy Vulnerability Scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'python:3.9-slim' # Base image taraması
+        format: 'table'
+        exit-code: '1' # Kritik açık varsa pipeline'ı patlat
+        severity: 'CRITICAL,HIGH'
+
+    # 4. Yeni Task Definition Oluştur (AWS'teki mevcut tanımı indirip imajı güncelle)
+    - name: Fill in the new image ID in the Amazon ECS task definition
+      id: task-def
+      uses: aws-actions/amazon-ecs-render-task-definition@v1
+      with:
+        task-definition: task-definition.json # Repoda boş bir template tutabilirsin
+        container-name: ${{ env.CONTAINER_NAME }}
+        image: ${{ steps.build-image.outputs.image }}
+
+    - name: Register Task Definition
+      id: register-task
+      run: |
+        # Yeni task definition'ı AWS'e kaydet ve ARN'sini al
+        aws ecs register-task-definition --cli-input-json file://${{ steps.task-def.outputs.task-definition }} > task-def-output.json
+        TASK_DEF_ARN=$(jq -r '.taskDefinition.taskDefinitionArn' task-def-output.json)
+        echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+
+    # 5. AppSpec Dosyasını Güncelle ve Deployment'ı Başlat
+    - name: Deploy to CodeDeploy
+      run: |
+        # AppSpec dosyasındaki <TASK_DEFINITION> yer tutucusunu gerçek ARN ile değiştir
+        sed -i "s|<TASK_DEFINITION>|${{ steps.register-task.outputs.task_def_arn }}|g" appspec.yaml
+        
+        # CodeDeploy'a deployment emri ver
+        aws deploy create-deployment \
+          --application-name ${{ env.CODEDEPLOY_APP }} \
+          --deployment-group-name ${{ env.CODEDEPLOY_GROUP }} \
+          --revision '{"revisionType": "AppSpecContent", "appSpecContent": {"content": "'$(cat appspec.yaml | tr '\n' ' ')'"}}'

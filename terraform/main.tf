@@ -7,7 +7,7 @@ provider "aws" {
 
 # Load balancer
 resource "aws_lb" "main" {
-  name               = "sufle-demo-alb"
+  name               = "bluegreen-demo-alb"
   load_balancer_type = "application"
   subnets            = [aws_subnet.public1.id, aws_subnet.public2.id]
   security_groups    = [aws_security_group.alb_sg.id]
@@ -26,6 +26,7 @@ resource "aws_lb_target_group" "blue" {
   
   health_check {
     path = "/health"
+    matcher = "200"
   }
 }
 
@@ -75,6 +76,10 @@ resource "aws_lb_listener" "test" {
   lifecycle {
     ignore_changes = [default_action]
   }
+}
+
+resource "aws_ecs_cluster" "main" {
+  name = "demo-cluster"  
 }
 
 # ECS service
