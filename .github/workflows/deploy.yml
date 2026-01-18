@@ -17,69 +17,69 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write # AWS OIDC için gerekli
+      id-token: write # Needed for AWS OIDC
       contents: read
 
     steps:
     - name: Checkout
       uses: actions/checkout@v3
 
-    # 1. AWS'e Login Ol (Access Key yerine OIDC kullanarak güvenliği artırıyoruz)
+    # AWS login
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
-        role-to-assume: arn:aws:iam::ACCOUNT_ID:role/GitHubActionRole
+        # IAM role that created in main.tf
+        role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionRole
         aws-region: ${{ env.AWS_REGION }}
 
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
-    # 2. Build & Push Docker Image
+    # Build and Push Docker image
     - name: Build, tag, and push image to Amazon ECR
       id: build-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ github.sha }}
+        IMAGE_TAG: ${{ github.sha }} # for better traceability
       run: |
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG.
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-        # 3. Güvenlik Taraması (DevSecOps)
+    # Security scanning
     - name: Trivy Vulnerability Scanner
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: 'python:3.9-slim' # Base image taraması
+        image-ref: ${{ steps.build-image.outputs.image }}
         format: 'table'
-        exit-code: '1' # Kritik açık varsa pipeline'ı patlat
+        exit-code: '1'
         severity: 'CRITICAL,HIGH'
 
-    # 4. Yeni Task Definition Oluştur (AWS'teki mevcut tanımı indirip imajı güncelle)
+    # Change ACCOUNT_ID placeholder with real ID
+    - name: Update Account ID in Task Definition
+      run: |
+        sed -i "s|<ACCOUNT_ID>|${{ secrets.AWS_ACCOUNT_ID }}|g" task-definition.json
+
+    # Creating new task definition (update image ID)
     - name: Fill in the new image ID in the Amazon ECS task definition
       id: task-def
       uses: aws-actions/amazon-ecs-render-task-definition@v1
       with:
-        task-definition: task-definition.json # Repoda boş bir template tutabilirsin
+        task-definition: task-definition.json
         container-name: ${{ env.CONTAINER_NAME }}
         image: ${{ steps.build-image.outputs.image }}
 
-    - name: Register Task Definition
-      id: register-task
-      run: |
-        # Yeni task definition'ı AWS'e kaydet ve ARN'sini al
-        aws ecs register-task-definition --cli-input-json file://${{ steps.task-def.outputs.task-definition }} > task-def-output.json
-        TASK_DEF_ARN=$(jq -r '.taskDefinition.taskDefinitionArn' task-def-output.json)
-        echo "task_def_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
-
-    # 5. AppSpec Dosyasını Güncelle ve Deployment'ı Başlat
-    - name: Deploy to CodeDeploy
-      run: |
-        # AppSpec dosyasındaki <TASK_DEFINITION> yer tutucusunu gerçek ARN ile değiştir
-        sed -i "s|<TASK_DEFINITION>|${{ steps.register-task.outputs.task_def_arn }}|g" appspec.yaml
-        
-        # CodeDeploy'a deployment emri ver
-        aws deploy create-deployment \
-          --application-name ${{ env.CODEDEPLOY_APP }} \
-          --deployment-group-name ${{ env.CODEDEPLOY_GROUP }} \
-          --revision '{"revisionType": "AppSpecContent", "appSpecContent": {"content": "'$(cat appspec.yaml | tr '\n' ' ')'"}}'
+    # Deploy, saves new task definition file to AWS ECS
+    # Then reads appspec.yaml
+    # Then triggers CodeDeploy service 
+    - name: Deploy to Amazon ECS
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      with:
+        task-definition: ${{ steps.task-def.outputs.task-definition }}
+        service: ${{ env.ECS_SERVICE }}
+        cluster: ${{ env.ECS_CLUSTER }}
+        wait-for-service-stability: true # pipeline waits untill CodeDeploy process finishes
+        codedeploy-appspec: appspec.yaml
+        codedeploy-application: ${{ env.CODEDEPLOY_APP }}
+        codedeploy-deployment-group: ${{ env.CODEDEPLOY_GROUP }}
