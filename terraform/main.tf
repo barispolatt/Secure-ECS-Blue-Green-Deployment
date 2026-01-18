@@ -40,3 +40,39 @@ resource "aws_lb_target_group" "green" {
     path = "/health"
   }
 }
+
+# Prod Listener (Port 80)
+resource "aws_lb_listener" "prod" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = "80"
+  protocol          = "HTTP"
+  
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.blue.arn # Traffic goes to blue when terraform first applied
+  }
+
+  # In state file it writes "prod listener looks blue", but when code deploy starts, it turns traffic to green
+  # When you terraform apply again, terraform returns it to blue again
+  # With ignore_changes, terraform ignores default_action, so CodeDeploy manages it
+
+  lifecycle {
+    ignore_changes = [default_action]
+  }
+}
+
+# Test Listener (Port 8080)
+resource "aws_lb_listener" "test" {
+  load_balancer_arn = aws_lb.main.arn
+  port              = "8080"
+  protocol          = "HTTP"
+  
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.green.arn
+  }
+  
+  lifecycle {
+    ignore_changes = [default_action]
+  }
+}
