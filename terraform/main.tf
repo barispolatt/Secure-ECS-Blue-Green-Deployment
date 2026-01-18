@@ -76,3 +76,36 @@ resource "aws_lb_listener" "test" {
     ignore_changes = [default_action]
   }
 }
+
+# ECS service
+resource "aws_ecs_service" "app" {
+  name            = "demo-service"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.app.arn
+  desired_count   = 2
+  launch_type     = "FARGATE"
+
+  # Deployment should be controlled by CodeDeploy
+  deployment_controller {
+    type = "CODE_DEPLOY"
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.blue.arn
+    container_name   = "app-container"
+    container_port   = 80
+  }
+
+  network_configuration {
+    subnets = [aws_subnet.private1.id, aws_subnet.private2.id]
+    security_groups = [aws_security_group.ecs_sg.id]
+  }
+
+  # same reson with listener
+  # new task definition and load balancer target changes should be made by CodeDeploy
+  # These are ignored to prevent terraform from detect these changes as errors or drifts
+  # if we do not ignore them, terraform reverts the changes 
+  lifecycle {
+    ignore_changes = [task_definition, load_balancer]
+  }
+}
