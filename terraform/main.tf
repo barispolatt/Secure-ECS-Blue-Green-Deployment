@@ -302,7 +302,7 @@ resource "aws_codedeploy_deployment_group" "dg" {
 # Logging 
 resource "aws_cloudwatch_log_group" "ecs_log_group" {
   name              = "/ecs/demo-service"
-  retention_in_days = 2 # to delete logs after 2 days (to avoid cost)
+  retention_in_days = 3 # to delete logs after 3 days (to avoid cost)
 }
 
 # ECR
