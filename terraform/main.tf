@@ -115,7 +115,7 @@ resource "aws_iam_role" "codedeploy" {
 
 resource "aws_iam_role_policy_attachment" "codedeploy_policy" {
   role       = aws_iam_role.codedeploy.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole"
+  policy_arn = "arn:aws:iam::aws:policy/AWSCodeDeployRoleForECS"
 }
 
 # ECS Execution Role
@@ -260,6 +260,8 @@ resource "aws_codedeploy_deployment_group" "dg" {
   app_name               = aws_codedeploy_app.app.name
   deployment_group_name  = "bluegreen-demo-dg"
   service_role_arn       = aws_iam_role.codedeploy.arn
+  
+  depends_on = [aws_iam_role_policy_attachment.codedeploy_policy] # create after role granted
 
   deployment_style {
     deployment_option = "WITH_TRAFFIC_CONTROL"
