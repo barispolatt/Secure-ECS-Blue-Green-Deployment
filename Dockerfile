@@ -2,9 +2,9 @@
 FROM python:3.9-slim
 
 WORKDIR /app
-COPY requirements.txt.
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py.
+COPY app.py .
 
 # Security Best Practice: Run with a user that is not root
 RUN useradd -m myuser && chown -R myuser /app
