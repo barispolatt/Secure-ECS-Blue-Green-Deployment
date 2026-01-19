@@ -9,7 +9,7 @@
 This project demonstrates a production-ready **DevSecOps pipeline** that deploys a Python FastAPI application to **AWS ECS Fargate** using a **Blue/Green Deployment** strategy. It ensures **Zero Downtime** updates and includes automated security scanning.
 
 ## 🏗 Architecture
-```mermaid
+```
 graph LR
     User --> ALB[Load Balancer]
     ALB -->|Prod Traffic| Blue[ECS Task (v1)]
