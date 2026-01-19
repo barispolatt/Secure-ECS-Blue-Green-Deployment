@@ -15,7 +15,7 @@
       ],
       "essential": true,
       "environment": [
-        { "name": "BG_COLOR", "value": "green" },
+        { "name": "BG_COLOR", "value": "blue" },
         { "name": "APP_VERSION", "value": "v1" }
       ],
       "logConfiguration": {
